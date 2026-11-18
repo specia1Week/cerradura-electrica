@@ -362,7 +362,9 @@ Deno.serve(async (request: Request): Promise<Response> => {
   // aunque las credenciales sigan siendo válidas.
   if (body.resultado === "DENEGADO" && motivoDispositivo) {
     if (motivoDispositivo === "HUELLA_NO_RECONOCIDA_3_INTENTOS") {
-      if (intentosHuella >= 3) motivo = motivoDispositivo;
+      if (intentosHuella >= 3 && (motivo === "HUELLA_NO_REGISTRADA" || motivo === "ACCESO_PERMITIDO")) {
+        motivo = motivoDispositivo;
+      }
     } else if (motivoDispositivo === "TARJETA_NO_REGISTRADA") {
       if (rfidCredential.kind === "missing") motivo = motivoDispositivo;
     } else if (motivoDispositivo === "USUARIO_INACTIVO") {
@@ -370,7 +372,9 @@ Deno.serve(async (request: Request): Promise<Response> => {
     } else if (motivoDispositivo === "HUELLA_OTRO_USUARIO") {
       if (motivo === "HUELLA_OTRO_USUARIO") motivo = motivoDispositivo;
     } else if (motivoDispositivo === "HUELLA_NO_REGISTRADA") {
-      if (intentosHuella >= 3) motivo = "HUELLA_NO_RECONOCIDA_3_INTENTOS";
+      if (intentosHuella >= 3 && (motivo === "HUELLA_NO_REGISTRADA" || motivo === "ACCESO_PERMITIDO")) {
+        motivo = "HUELLA_NO_RECONOCIDA_3_INTENTOS";
+      }
     } else if (
       motivoDispositivo === "TIMEOUT_BACKEND" ||
       motivoDispositivo === "BLOQUEO_TEMPORAL"
