@@ -58,6 +58,17 @@ const MOTIVOS = [
   { value: 'BLOQUEO_TEMPORAL', label: 'Bloqueo temporal' },
 ] as const;
 
+// Los eventos anteriores usaban otros nombres. Se incluyen al filtrar para
+// que el historial siga siendo visible después de unificar los motivos.
+const MOTIVO_ALIASES: Record<string, string[]> = {
+  HUELLA_NO_RECONOCIDA_3_INTENTOS: ['HUELLA_NO_RECONOCIDA_3_INTENTOS'],
+  HUELLA_OTRO_USUARIO: ['HUELLA_OTRO_USUARIO', 'CREDENCIALES_NO_COINCIDEN'],
+  TARJETA_NO_REGISTRADA: ['TARJETA_NO_REGISTRADA', 'RFID_NO_REGISTRADO'],
+  USUARIO_INACTIVO: ['USUARIO_INACTIVO'],
+  TIMEOUT_BACKEND: ['TIMEOUT_BACKEND', 'TIMEOUT_CONSULTA'],
+  BLOQUEO_TEMPORAL: ['BLOQUEO_TEMPORAL'],
+};
+
 export default async function EventsPage({
   searchParams,
 }: {
@@ -83,6 +94,7 @@ export default async function EventsPage({
       : undefined;
   const motivoRaw = firstParam(params.motivo);
   const motivo = MOTIVOS.find((item) => item.value === motivoRaw)?.value;
+  const motivoFiltros = motivo ? MOTIVO_ALIASES[motivo] : undefined;
   const requestedPage = parsePositiveInt(firstParam(params.page), 1);
 
   const start = dateInputToStart(fromDate).toISOString();
@@ -97,7 +109,7 @@ export default async function EventsPage({
   if (deviceId) countQuery = countQuery.eq('device_id', deviceId);
   if (userId) countQuery = countQuery.eq('user_id', userId);
   if (resultado) countQuery = countQuery.eq('resultado', resultado);
-  if (motivo) countQuery = countQuery.eq('motivo', motivo);
+  if (motivoFiltros) countQuery = countQuery.in('motivo', motivoFiltros);
 
   const { count, error: countError } = await countQuery;
   if (countError) throw new Error(countError.message);
@@ -117,7 +129,7 @@ export default async function EventsPage({
   if (deviceId) dataQuery = dataQuery.eq('device_id', deviceId);
   if (userId) dataQuery = dataQuery.eq('user_id', userId);
   if (resultado) dataQuery = dataQuery.eq('resultado', resultado);
-  if (motivo) dataQuery = dataQuery.eq('motivo', motivo);
+  if (motivoFiltros) dataQuery = dataQuery.in('motivo', motivoFiltros);
 
   const [eventsResult, devicesResult, usersResult] = await Promise.all([
     dataQuery,

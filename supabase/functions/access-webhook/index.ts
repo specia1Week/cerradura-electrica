@@ -5,10 +5,11 @@ type AccessResult = "PERMITIDO" | "DENEGADO";
 interface DeviceEventPayload {
   event_uuid: string;
   rfid_uid: string;
-  fingerprint_template_id: number;
+  fingerprint_template_id: number | null;
   occurred_at: string;
   resultado: AccessResult;
   motivo: string | null;
+  intentos_huella?: number;
   firmware_version?: string;
   rssi?: number;
 }
@@ -41,25 +42,69 @@ const isUuidV4 = (value: unknown): value is string =>
   typeof value === "string" &&
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 
+// Motivos que el ESP32 puede enviar. El backend sigue siendo la autoridad
+// sobre las credenciales; estos motivos solo describen una denegación local
+// (por ejemplo, agotar los 3 intentos de huella o un timeout de red).
+const MOTIVOS_DISPOSITIVO = new Set([
+  "HUELLA_NO_RECONOCIDA_3_INTENTOS",
+  "HUELLA_OTRO_USUARIO",
+  "TARJETA_NO_REGISTRADA",
+  "USUARIO_INACTIVO",
+  "TIMEOUT_BACKEND",
+  "BLOQUEO_TEMPORAL",
+  // Alias de versiones anteriores del firmware.
+  "RFID_NO_REGISTRADO",
+  "CREDENCIALES_NO_COINCIDEN",
+  "HUELLA_NO_REGISTRADA",
+  "TIMEOUT_CONSULTA",
+]);
+
+function normalizeDeviceMotive(value: string | null): string | null {
+  if (value === null || !MOTIVOS_DISPOSITIVO.has(value)) return null;
+  switch (value) {
+    case "RFID_NO_REGISTRADO":
+      return "TARJETA_NO_REGISTRADA";
+    case "CREDENCIALES_NO_COINCIDEN":
+      return "HUELLA_OTRO_USUARIO";
+    case "TIMEOUT_CONSULTA":
+      return "TIMEOUT_BACKEND";
+    default:
+      return value;
+  }
+}
+
 function isDeviceEventPayload(value: unknown): value is DeviceEventPayload {
   if (!isRecord(value)) return false;
 
   const hasOwn = (key: string) => Object.prototype.hasOwnProperty.call(value, key);
   const hasTimezone = typeof value.occurred_at === "string" &&
     /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/i.test(value.occurred_at);
+  const fingerprintId = value.fingerprint_template_id;
+  const fingerprintValida = value.resultado === "DENEGADO"
+    ? fingerprintId === null ||
+      fingerprintId === 0 ||
+      (typeof fingerprintId === "number" &&
+        Number.isInteger(fingerprintId) &&
+        fingerprintId >= 1 &&
+        fingerprintId <= 999)
+    : typeof fingerprintId === "number" &&
+      Number.isInteger(fingerprintId) &&
+      fingerprintId >= 1 &&
+      fingerprintId <= 999;
+  const intentos = value.intentos_huella;
 
   return isUuidV4(value.event_uuid) &&
     typeof value.rfid_uid === "string" &&
     value.rfid_uid.trim().length > 0 &&
     value.rfid_uid.trim().length <= 64 &&
-    Number.isInteger(value.fingerprint_template_id) &&
-    (value.fingerprint_template_id as number) >= 1 &&
-    (value.fingerprint_template_id as number) <= 999 &&
+    fingerprintValida &&
     hasTimezone &&
     Number.isFinite(Date.parse(value.occurred_at as string)) &&
     (value.resultado === "PERMITIDO" || value.resultado === "DENEGADO") &&
     hasOwn("motivo") &&
     (value.motivo === null || typeof value.motivo === "string") &&
+    (intentos === undefined ||
+      (typeof intentos === "number" && Number.isInteger(intentos) && intentos >= 0 && intentos <= 99)) &&
     (value.firmware_version === undefined ||
       (typeof value.firmware_version === "string" && value.firmware_version.length <= 64)) &&
     (value.rssi === undefined ||
@@ -163,6 +208,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
     return apiKeyError();
   }
 
+  const deviceId = device.id;
   const deviceUpdate: Record<string, unknown> = { last_seen_at: new Date().toISOString() };
   const ip = request.headers.get("cf-connecting-ip") ?? request.headers.get("x-real-ip");
   if (ip && ip.length <= 64) deviceUpdate.ip = ip;
@@ -172,7 +218,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
   const { error: updateDeviceError } = await supabase
     .from("devices")
     .update(deviceUpdate)
-    .eq("id", device.id);
+    .eq("id", deviceId);
   if (updateDeviceError) {
     // El registro del evento es más importante que las métricas no esenciales del dispositivo.
     console.error("[access-webhook] No se pudieron actualizar metadatos del dispositivo", updateDeviceError.message);
@@ -186,7 +232,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
     resultado: string;
     motivo: string | null;
   }): Promise<Response> {
-    if (event.device_id !== device.id) {
+    if (event.device_id !== deviceId) {
       console.log(`[access-webhook] UUID duplicado en otro dispositivo: ${eventUuid}`);
       return jsonResponse({ autorizado: false, motivo: "EVENTO_DUPLICADO", nombre: null });
     }
@@ -231,7 +277,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
     const { data, error } = await supabase
       .from("credentials")
       .select("user_id")
-      .eq("device_id", device.id)
+      .eq("device_id", deviceId)
       .eq("tipo", tipo)
       .eq("activo", true)
       .eq(column, value)
@@ -249,16 +295,21 @@ Deno.serve(async (request: Request): Promise<Response> => {
   let rfidCredential: CredentialState;
   let fingerprintCredential: CredentialState;
   try {
+    const fingerprintLookup = body.fingerprint_template_id !== null &&
+        body.fingerprint_template_id >= 1
+      ? findCredential("HUELLA", "fingerprint_template_id", body.fingerprint_template_id)
+      : Promise.resolve<CredentialState>({ kind: "missing" });
+
     [rfidCredential, fingerprintCredential] = await Promise.all([
       findCredential("RFID", "rfid_uid", body.rfid_uid.trim()),
-      findCredential("HUELLA", "fingerprint_template_id", body.fingerprint_template_id),
+      fingerprintLookup,
     ]);
   } catch (error) {
     console.error("[access-webhook] Error al resolver credenciales", error);
     return jsonResponse({ error: "database_error" }, 500);
   }
 
-  let autorizado = false;
+  let backendAutorizado = false;
   let motivo = "CREDENCIALES_NO_VALIDAS";
   let userId: string | null = null;
   let nombre: string | null = null;
@@ -267,13 +318,13 @@ Deno.serve(async (request: Request): Promise<Response> => {
     motivo = "CREDENCIAL_AMBIGUA";
     console.error("[access-webhook] Hay credenciales duplicadas para el dispositivo");
   } else if (rfidCredential.kind === "missing") {
-    motivo = "RFID_NO_REGISTRADO";
+    motivo = "TARJETA_NO_REGISTRADA";
     console.log(`[access-webhook] RFID no registrado: ${body.rfid_uid}`);
   } else if (fingerprintCredential.kind === "missing") {
     motivo = "HUELLA_NO_REGISTRADA";
     console.log(`[access-webhook] Huella no registrada: ${body.fingerprint_template_id}`);
   } else if (rfidCredential.userId !== fingerprintCredential.userId) {
-    motivo = "CREDENCIALES_NO_COINCIDEN";
+    motivo = "HUELLA_OTRO_USUARIO";
     console.log("[access-webhook] RFID y huella pertenecen a usuarios distintos");
   } else {
     userId = rfidCredential.userId;
@@ -296,30 +347,95 @@ Deno.serve(async (request: Request): Promise<Response> => {
       motivo = "USUARIO_INACTIVO";
       console.log(`[access-webhook] Usuario inactivo: ${user.id}`);
     } else {
-      autorizado = true;
+      backendAutorizado = true;
       motivo = "ACCESO_PERMITIDO";
       nombre = typeof user.nombre === "string" ? user.nombre : null;
       console.log(`[access-webhook] Acceso autorizado para ${user.id}`);
     }
   }
 
+  const intentosHuella = body.intentos_huella ?? 0;
+  const motivoDispositivo = normalizeDeviceMotive(body.motivo);
+
+  // El ESP32 puede denegar localmente (por ejemplo, tras 3 intentos de huella
+  // o por un timeout). Esa denegación no se convierte en acceso permitido
+  // aunque las credenciales sigan siendo válidas.
+  if (body.resultado === "DENEGADO" && motivoDispositivo) {
+    if (motivoDispositivo === "HUELLA_NO_RECONOCIDA_3_INTENTOS") {
+      if (intentosHuella >= 3) motivo = motivoDispositivo;
+    } else if (motivoDispositivo === "TARJETA_NO_REGISTRADA") {
+      if (rfidCredential.kind === "missing") motivo = motivoDispositivo;
+    } else if (motivoDispositivo === "USUARIO_INACTIVO") {
+      if (motivo === "USUARIO_INACTIVO") motivo = motivoDispositivo;
+    } else if (motivoDispositivo === "HUELLA_OTRO_USUARIO") {
+      if (motivo === "HUELLA_OTRO_USUARIO") motivo = motivoDispositivo;
+    } else if (motivoDispositivo === "HUELLA_NO_REGISTRADA") {
+      if (intentosHuella >= 3) motivo = "HUELLA_NO_RECONOCIDA_3_INTENTOS";
+    } else if (
+      motivoDispositivo === "TIMEOUT_BACKEND" ||
+      motivoDispositivo === "BLOQUEO_TEMPORAL"
+    ) {
+      motivo = motivoDispositivo;
+    }
+  }
+
+  const autorizado = backendAutorizado && body.resultado === "PERMITIDO";
+  if (!autorizado && motivo === "ACCESO_PERMITIDO") {
+    motivo = "DENEGADO_POR_DISPOSITIVO";
+  }
+  if (!autorizado && userId === null && motivo === "HUELLA_NO_RECONOCIDA_3_INTENTOS" &&
+    rfidCredential.kind === "found") {
+    userId = rfidCredential.userId;
+  }
+
   const resultadoBackend: AccessResult = autorizado ? "PERMITIDO" : "DENEGADO";
+  const fingerprintTemplateId = body.fingerprint_template_id !== null &&
+      body.fingerprint_template_id >= 1
+    ? body.fingerprint_template_id
+    : null;
   if (body.resultado !== resultadoBackend) {
     console.log(`[access-webhook] Resultado ESP ${body.resultado}; backend ${resultadoBackend}`);
   }
-  console.log(`[access-webhook] Motivo ESP: ${body.motivo ?? "(sin motivo)"}`);
+  console.log(`[access-webhook] Motivo ESP: ${body.motivo ?? "(sin motivo)"}; intentos: ${intentosHuella}`);
 
-  const { data: recordData, error: recordError } = await supabase.rpc("record_access_event", {
+  const rpcArgs = {
     p_event_uuid: eventUuid,
-    p_device_id: device.id,
+    p_device_id: deviceId,
     p_user_id: userId,
     p_rfid_uid: body.rfid_uid.trim(),
-    p_fingerprint_template_id: body.fingerprint_template_id,
+    p_fingerprint_template_id: fingerprintTemplateId,
     p_resultado: resultadoBackend,
     p_motivo: motivo,
     p_occurred_at: new Date(body.occurred_at).toISOString(),
     p_resultado_esp: body.resultado,
+  };
+
+  let { data: recordData, error: recordError } = await supabase.rpc("record_access_event", {
+    ...rpcArgs,
+    p_intentos_huella: intentosHuella,
   });
+
+  // Compatibilidad temporal: si la migración que agrega p_intentos_huella
+  // todavía no está aplicada, se registra el evento y luego se actualiza el
+  // contador. Así el webhook no deja de guardar accesos durante el despliegue.
+  if (recordError?.code === "PGRST202") {
+    console.warn("[access-webhook] record_access_event sin p_intentos_huella; usando compatibilidad");
+    const fallback = await supabase.rpc("record_access_event", rpcArgs);
+    recordData = fallback.data;
+    recordError = fallback.error;
+    if (!recordError) {
+      const fallbackEvent = parseStoredEvent(recordData);
+      if (fallbackEvent) {
+        const { error: updateError } = await supabase
+          .from("access_events")
+          .update({ intentos_huella: intentosHuella })
+          .eq("id", fallbackEvent.event_id);
+        if (updateError) {
+          console.error("[access-webhook] No se pudo actualizar intentos_huella", updateError.message);
+        }
+      }
+    }
+  }
 
   if (recordError?.code === "23505") {
     const { data: duplicate, error: duplicateError } = await supabase

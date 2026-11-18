@@ -1,3 +1,5 @@
+// Última modificación: 2026-11-17
+
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import {
@@ -118,7 +120,7 @@ export default async function AttendancePage({
         description="Consultá entradas y salidas por fecha y usuario. La asistencia se calcula con los accesos permitidos y se puede exportar a CSV."
         actions={
           <Button asChild variant="outline">
-            <Link href={exportHref}>
+            <Link href={exportHref} prefetch={false}>
               <Download className="h-4 w-4" />
               Exportar CSV
             </Link>

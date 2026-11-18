@@ -62,10 +62,10 @@ constexpr uint8_t PIN_R307_RX = 16;  // TXD del R307 -> RX2 del ESP32
 constexpr uint8_t PIN_R307_TX = 17;  // RXD del R307 -> TX2 del ESP32
 constexpr uint8_t PIN_R307_TOUCH = 4; // TOUCH opcional (no imprescindible)
 
-constexpr uint8_t PIN_RELE = 25;     // Activo en LOW
+constexpr uint8_t PIN_RELE = 14;     // Activo en LOW
 constexpr uint8_t PIN_LED_R = 26;
 constexpr uint8_t PIN_LED_G = 27;
-constexpr uint8_t PIN_LED_B = 14;
+constexpr uint8_t PIN_LED_B = 25;
 
 // ---------------------------------------------------------------------------
 // Constantes de tiempo y version
@@ -187,6 +187,7 @@ unsigned long inicioDenegado = 0;
 unsigned long inicioConcedido = 0;
 String uidActual;
 int slotActual = -1;
+int intentosHuella = 0;
 bool consultaPendiente = false;
 bool requiereRetiroTarjeta = false;
 unsigned long tarjetaAusenteDesde = 0;
@@ -253,9 +254,10 @@ void denegarAcceso(const String& motivo);
 void concederAcceso();
 void finalizarAcceso();
 void procesarConsultaBackend();
+void reportarDenegacionLocal(const String& motivo, int intentos);
 String construirEventoAcceso(const String& uuid, const String& uid, int slot,
                              const String& occurred, const String& resultado,
-                             const String& motivo);
+                             const String& motivo, int intentos);
 String generarUuidV4();
 
 int contarEventosOffline();
@@ -639,9 +641,9 @@ const char PAGINA_CONFIG[] PROGMEM = R"rawliteral(
       <label>API Key del dispositivo</label>
       <input name="apikey" type="password" required maxlength="128" placeholder="Ej: test">
       <label>URL access-webhook</label>
-      <input name="access" required maxlength="256" placeholder="https://TU-PROYECTO.supabase.co/functions/v1/access-webhook">
+      <input name="access" required maxlength="256" placeholder="https://fotujrqdappkspsygnqt.supabase.co/functions/v1/access-webhook">
       <label>URL device-sync</label>
-      <input name="sync" required maxlength="256" placeholder="https://TU-PROYECTO.supabase.co/functions/v1/device-sync">
+      <input name="sync" required maxlength="256" placeholder="https://fotujrqdappkspsygnqt.supabase.co/functions/v1/device-sync">
       <label>URL OTA (opcional)</label>
       <input name="ota" maxlength="256" placeholder="https://.../firmware.bin">
       <div class="hint">La URL OTA se consulta automáticamente si está configurada.</div>
@@ -1025,6 +1027,7 @@ void cambiarEstadoAcceso(EstadoAcceso nuevo) {
 void iniciarAcceso(const String& uid) {
   uidActual = uid;
   slotActual = -1;
+  intentosHuella = 0;
   consultaPendiente = false;
   ultimoMotivo = "";
   cambiarEstadoAcceso(ST_TARJETA);
@@ -1150,7 +1153,14 @@ void loopAcceso() {
       }
 
       if (p == FINGERPRINT_NOTFOUND) {
-        Serial.println("[HUELLA] Sin coincidencia. Reintente hasta 10 s.");
+        intentosHuella++;
+        Serial.printf("[HUELLA] Sin coincidencia (%d/3). Reintente hasta 10 s.\n",
+                      intentosHuella);
+        if (intentosHuella >= 3) {
+          denegarAcceso("HUELLA_NO_RECONOCIDA_3_INTENTOS");
+          reportarDenegacionLocal("HUELLA_NO_RECONOCIDA_3_INTENTOS", intentosHuella);
+          return;
+        }
       } else {
         Serial.printf("[HUELLA] fingerFastSearch error 0x%02X\n", p);
       }
@@ -1183,15 +1193,17 @@ void loopAcceso() {
 // ---------------------------------------------------------------------------
 String construirEventoAcceso(const String& uuid, const String& uid, int slot,
                              const String& occurred, const String& resultado,
-                             const String& motivo) {
+                             const String& motivo, int intentos) {
   JsonDocument doc;
   doc["event_uuid"] = uuid;
   doc["rfid_uid"] = uid;
-  doc["fingerprint_template_id"] = slot;
+  if (slot > 0) doc["fingerprint_template_id"] = slot;
+  else doc["fingerprint_template_id"] = nullptr;
   doc["occurred_at"] = occurred;
   doc["resultado"] = resultado;
   if (motivo.length() == 0) doc["motivo"] = nullptr;
   else doc["motivo"] = motivo;
+  doc["intentos_huella"] = intentos;
   doc["firmware_version"] = FW_VERSION;
 
   if (WiFi.status() == WL_CONNECTED) {
@@ -1201,6 +1213,29 @@ String construirEventoAcceso(const String& uuid, const String& uid, int slot,
   String salida;
   serializeJson(doc, salida);
   return salida;
+}
+
+void reportarDenegacionLocal(const String& motivo, int intentos) {
+  if (uidActual.length() == 0 || !horaValida()) return;
+
+  String uuid = generarUuidV4();
+  String occurred = ahoraIso8601();
+  String body = construirEventoAcceso(uuid, uidActual, slotActual, occurred,
+                                      "DENEGADO", motivo, intentos);
+
+  if (WiFi.status() != WL_CONNECTED) {
+    guardarEventoOffline(uuid, body);
+    return;
+  }
+
+  Serial.printf("[HTTP] POST denegacion local (uuid=%s, motivo=%s)\n",
+                uuid.c_str(), motivo.c_str());
+  RespuestaHttp r = postJson(config.accessUrl, body, MS_TIMEOUT_HTTP);
+  if (r.codigo != 200 && r.codigo != 400 && r.codigo != 422) {
+    Serial.printf("[HTTP] Denegacion local no registrada (%d). A cola offline.\n",
+                  r.codigo);
+    guardarEventoOffline(uuid, body);
+  }
 }
 
 void procesarConsultaBackend() {
@@ -1219,14 +1254,14 @@ void procesarConsultaBackend() {
 
   if (WiFi.status() != WL_CONNECTED) {
     String body = construirEventoAcceso(uuid, uidActual, slotActual, occurred,
-                                        "DENEGADO", "SIN_WIFI");
+                                        "DENEGADO", "SIN_WIFI", intentosHuella);
     guardarEventoOffline(uuid, body);
     denegarAcceso("SIN_WIFI");
     return;
   }
 
   String body = construirEventoAcceso(uuid, uidActual, slotActual, occurred,
-                                      "PERMITIDO", "");
+                                      "PERMITIDO", "", intentosHuella);
   Serial.printf("[HTTP] POST access-webhook (uuid=%s)\n", uuid.c_str());
   RespuestaHttp r = postJson(url, body, MS_TIMEOUT_HTTP);
 
@@ -1267,7 +1302,7 @@ void procesarConsultaBackend() {
   if (r.codigo <= 0) {
     Serial.printf("[HTTP] Error de red/timeout (%d). Evento a cola offline.\n", r.codigo);
     String bodyOff = construirEventoAcceso(uuid, uidActual, slotActual, occurred,
-                                           "DENEGADO", "TIMEOUT_CONSULTA");
+                                           "DENEGADO", "TIMEOUT_CONSULTA", intentosHuella);
     guardarEventoOffline(uuid, bodyOff);
     denegarAcceso("TIMEOUT_CONSULTA");
     return;
@@ -1286,7 +1321,7 @@ void procesarConsultaBackend() {
   // 401/403/404/429/5xx: se conserva para reintentar cuando se corrija la red
   // o la configuración.
   String bodyOff = construirEventoAcceso(uuid, uidActual, slotActual, occurred,
-                                         "DENEGADO", motivoHttp);
+                                         "DENEGADO", motivoHttp, intentosHuella);
   guardarEventoOffline(uuid, bodyOff);
   denegarAcceso(motivoHttp);
 }

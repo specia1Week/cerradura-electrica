@@ -1,7 +1,10 @@
+// Última modificación: 2026-11-17
+
 'use client';
 
 import { useEffect, useRef, useState, useTransition } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   AlertCircle,
   ArrowLeft,
@@ -129,6 +132,8 @@ export function EnrollmentProgress({
   const [actionError, setActionError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const expireRequested = useRef(false);
+  const previousEstado = useRef<CommandEstado>(initialCommand.estado);
+  const router = useRouter();
 
   useEffect(() => {
     const supabase = createSupabaseBrowserClient();
@@ -188,6 +193,14 @@ export function EnrollmentProgress({
       window.clearInterval(interval);
     };
   }, [command.estado, initialCommand.id]);
+
+  useEffect(() => {
+    const wasActive = isActive(previousEstado.current);
+    previousEstado.current = command.estado;
+    if (wasActive && isTerminal(command.estado)) {
+      router.refresh();
+    }
+  }, [command.estado, router]);
 
   const expiresAt = new Date(command.expires_at).getTime();
   const remainingSeconds = Math.max(0, Math.floor((expiresAt - now) / 1000));
