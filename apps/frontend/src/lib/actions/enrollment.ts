@@ -125,6 +125,120 @@ export async function startEnrollment(formData: FormData): Promise<void> {
   redirect(`${path}?command=${command.id}`);
 }
 
+export async function retryEnrollmentWithNextSlot(
+  failedCommandId: string,
+): Promise<{ ok: true; commandId: string } | { ok: false; error: string }> {
+  const context = await requireAuthContext();
+  if (!isUuid(failedCommandId)) {
+    return { ok: false, error: 'El comando no es válido.' };
+  }
+
+  const admin = createSupabaseAdminClient();
+  const { data: failedCommand } = await admin
+    .from('device_commands')
+    .select('id, device_id, user_id, tipo, estado, paso, detalle')
+    .eq('id', failedCommandId)
+    .maybeSingle();
+
+  if (
+    !failedCommand ||
+    failedCommand.tipo !== 'ENROLL_USUARIO' ||
+    failedCommand.estado !== 'FALLIDO' ||
+    failedCommand.paso !== 'SLOT_OCUPADO_LOCAL' ||
+    !failedCommand.user_id
+  ) {
+    return { ok: false, error: 'El lector no reportó un slot ocupado.' };
+  }
+
+  const previousRetries = Number(
+    failedCommand.detalle?.reintentos_slot_ocupado ?? 0,
+  );
+  if (previousRetries >= 20) {
+    return {
+      ok: false,
+      error:
+        'Se encontraron demasiados slots ocupados. Revisá el sensor antes de continuar.',
+    };
+  }
+
+  const [{ data: user }, { data: device }] = await Promise.all([
+    admin
+      .from('users')
+      .select('id, nombre, estado')
+      .eq('id', failedCommand.user_id)
+      .maybeSingle(),
+    admin
+      .from('devices')
+      .select('id, nombre, estado, last_seen_at')
+      .eq('id', failedCommand.device_id)
+      .maybeSingle(),
+  ]);
+
+  if (!user || user.estado !== 'ACTIVO') {
+    return { ok: false, error: 'El usuario ya no está activo.' };
+  }
+  if (!device || device.estado !== 'ACTIVO' || !isDeviceOnline(device.last_seen_at)) {
+    return { ok: false, error: 'El dispositivo dejó de estar en línea.' };
+  }
+
+  const { data: activeCommand } = await admin
+    .from('device_commands')
+    .select('id')
+    .eq('device_id', device.id)
+    .in('estado', ['PENDIENTE', 'EN_CURSO'])
+    .maybeSingle();
+  if (activeCommand) {
+    return {
+      ok: false,
+      error: 'El dispositivo ya tiene otro comando activo.',
+    };
+  }
+
+  const { data: slot, error: slotError } = await admin.rpc(
+    'reserve_fingerprint_slot',
+    { p_device_id: device.id },
+  );
+  if (slotError || slot === null || slot === undefined) {
+    return {
+      ok: false,
+      error: slotError?.message ?? 'No hay slots de huella disponibles.',
+    };
+  }
+
+  const { data: command, error: commandError } = await admin
+    .from('device_commands')
+    .insert({
+      device_id: device.id,
+      tipo: 'ENROLL_USUARIO',
+      user_id: user.id,
+      fingerprint_slot: slot,
+      estado: 'PENDIENTE',
+      created_by: context.user.id,
+      expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),
+      detalle: {
+        origen: 'panel',
+        usuario: user.nombre,
+        dispositivo: device.nombre,
+        reintentos_slot_ocupado: previousRetries + 1,
+      },
+    })
+    .select('id')
+    .single();
+
+  if (commandError || !command) {
+    return {
+      ok: false,
+      error: commandError?.message ?? 'No se pudo reintentar el enrolamiento.',
+    };
+  }
+
+  const path = enrollmentPath(user.id);
+  revalidatePath(path);
+  revalidatePath('/usuarios');
+  revalidatePath('/dispositivos');
+  return { ok: true, commandId: command.id };
+}
+
 export async function cancelEnrollment(
   commandId: string,
 ): Promise<ActionResult> {

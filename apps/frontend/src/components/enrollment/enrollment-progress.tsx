@@ -4,7 +4,7 @@
 
 import { useEffect, useRef, useState, useTransition } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import {
   AlertCircle,
   ArrowLeft,
@@ -21,6 +21,7 @@ import {
   cancelEnrollment,
   expireEnrollment,
   fetchEnrollmentStatus,
+  retryEnrollmentWithNextSlot,
 } from '@/lib/actions/enrollment';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import type { CommandEstado, DeviceCommandRecord } from '@/lib/types';
@@ -130,10 +131,13 @@ export function EnrollmentProgress({
     'conectando',
   );
   const [actionError, setActionError] = useState<string | null>(null);
+  const [findingNextSlot, setFindingNextSlot] = useState(false);
   const [isPending, startTransition] = useTransition();
   const expireRequested = useRef(false);
+  const autoRetryStarted = useRef(new Set<string>());
   const previousEstado = useRef<CommandEstado>(initialCommand.estado);
   const router = useRouter();
+  const pathname = usePathname();
 
   useEffect(() => {
     const supabase = createSupabaseBrowserClient();
@@ -225,6 +229,35 @@ export function EnrollmentProgress({
   const isRunning = isActive(effectiveEstado) && !expiredByTime;
   const failureDetail = detailText(command.detalle);
 
+  useEffect(() => {
+    if (
+      effectiveEstado !== 'FALLIDO' ||
+      command.paso !== 'SLOT_OCUPADO_LOCAL' ||
+      autoRetryStarted.current.has(command.id)
+    ) {
+      return;
+    }
+
+    autoRetryStarted.current.add(command.id);
+    setFindingNextSlot(true);
+    setActionError(null);
+    void retryEnrollmentWithNextSlot(command.id)
+      .then((result) => {
+        if (!result.ok) {
+          setActionError(result.error);
+          return;
+        }
+        router.replace(`${pathname}?command=${result.commandId}`);
+        router.refresh();
+      })
+      .catch(() => {
+        setActionError(
+          'No se pudo buscar otro slot. Intentá iniciar el registro nuevamente.',
+        );
+      })
+      .finally(() => setFindingNextSlot(false));
+  }, [command.id, command.paso, effectiveEstado, pathname, router]);
+
   function cancel() {
     setActionError(null);
     startTransition(async () => {
@@ -259,13 +292,15 @@ export function EnrollmentProgress({
             <CardTitle className="text-xl">
               {isComplete
                 ? 'Huella enrolada'
-                : isFailed
-                  ? 'El registro falló'
-                  : isExpired
-                    ? 'El comando expiró'
-                    : isCancelled
-                      ? 'Registro cancelado'
-                      : 'Registro en curso'}
+                : findingNextSlot
+                  ? 'Buscando un slot libre'
+                  : isFailed
+                    ? 'El registro falló'
+                    : isExpired
+                      ? 'El comando expiró'
+                      : isCancelled
+                        ? 'Registro cancelado'
+                        : 'Registro en curso'}
             </CardTitle>
             <CardDescription className="mt-1">
               {userName} · {deviceName}
@@ -343,7 +378,17 @@ export function EnrollmentProgress({
             </Alert>
           )}
 
-          {isFailed && (
+          {findingNextSlot && (
+            <Alert variant="warning" className="mt-4">
+              <RefreshCw className="h-4 w-4 animate-spin" />
+              <AlertTitle>Slot ocupado</AlertTitle>
+              <AlertDescription>
+                El lector está buscando automáticamente el siguiente slot libre.
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {isFailed && !findingNextSlot && (
             <Alert variant="destructive" className="mt-4">
               <XCircle className="h-4 w-4" />
               <AlertTitle>No se pudo completar el registro</AlertTitle>
