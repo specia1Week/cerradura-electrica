@@ -49,7 +49,7 @@ export function MobileNav({ email, role }: { email: string; role: string }) {
         />
         <aside
           className={cn(
-            'absolute left-0 top-0 flex h-full w-[min(86vw,320px)] flex-col border-r border-border bg-sidebar p-4 shadow-float transition-transform duration-300',
+            'absolute left-0 top-0 flex h-full w-[min(86vw,320px)] flex-col border-r border-border bg-card p-4 text-card-foreground shadow-float transition-transform duration-300',
             open ? 'translate-x-0' : '-translate-x-full',
           )}
         >
