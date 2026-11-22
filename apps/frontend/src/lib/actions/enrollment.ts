@@ -88,7 +88,7 @@ export async function startEnrollment(formData: FormData): Promise<void> {
     fail(path, 'No hay slots de huella disponibles en este dispositivo.');
   }
 
-  const expiresAt = new Date(Date.now() + 5 * 60_000).toISOString();
+  const expiresAt = new Date(Date.now() + 60 * 60_000).toISOString();
   const { data: command, error: commandError } = await admin
     .from('device_commands')
     .insert({
@@ -214,7 +214,7 @@ export async function retryEnrollmentWithNextSlot(
       fingerprint_slot: slot,
       estado: 'PENDIENTE',
       created_by: context.user.id,
-      expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),
+      expires_at: new Date(Date.now() + 60 * 60_000).toISOString(),
       detalle: {
         origen: 'panel',
         usuario: user.nombre,

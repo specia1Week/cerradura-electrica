@@ -260,7 +260,7 @@ export default async function EnrollUserPage({
                     </div>
                     <div className="surface-muted p-3">
                       <p className="eyebrow mb-1">Duración</p>
-                      <p>El comando expira a los 5 minutos.</p>
+                      <p>El comando expira a la hora.</p>
                     </div>
                   </div>
 

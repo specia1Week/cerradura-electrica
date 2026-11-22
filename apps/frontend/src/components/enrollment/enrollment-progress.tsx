@@ -412,7 +412,7 @@ export function EnrollmentProgress({
               </AlertTitle>
               <AlertDescription>
                 {isExpired
-                  ? 'El dispositivo no completó el registro dentro de los 5 minutos. Podés iniciar uno nuevo.'
+                  ? 'El dispositivo no completó el registro dentro de una hora. Podés iniciar uno nuevo.'
                   : 'El comando se canceló desde el panel. Si el dispositivo ya había guardado la huella, debería eliminarla localmente al reportar el estado.'}
               </AlertDescription>
             </Alert>
