@@ -5,11 +5,11 @@
  *  Doble factor: tarjeta RFID (RC522) + huella dactilar (R307).
  *  La validación biométrica es LOCAL; el backend solo autoriza y registra.
  *
- *  PINOUT FIJO (AGENTS.md):
+ *  PINOUT DEL MONTAJE FÍSICO:
  *    RC522  : SDA/SS=5, SCK=18, MOSI=23, MISO=19, RST=21, 3.3V (¡NO 5V!)
  *    R307   : TXD->GPIO16 (RX2), RXD->GPIO17 (TX2), VCC=5V
- *    Relé   : IN=GPIO25 (activo en LOW)
- *    LED RGB: R=GPIO26, G=GPIO27, B=GPIO14 (cátodo común)
+ *    Relé   : IN=GPIO14 (activo en LOW)
+ *    LED RGB: R=GPIO27, G=GPIO26, B=GPIO25 (cátodo común)
  *
  *  LIBRERÍAS (Arduino IDE):
  *    - MFRC522
@@ -63,8 +63,8 @@ constexpr uint8_t PIN_R307_TX = 17;  // RXD del R307 -> TX2 del ESP32
 constexpr uint8_t PIN_R307_TOUCH = 4; // TOUCH opcional (no imprescindible)
 
 constexpr uint8_t PIN_RELE = 14;     // Activo en LOW
-constexpr uint8_t PIN_LED_R = 26;
-constexpr uint8_t PIN_LED_G = 27;
+constexpr uint8_t PIN_LED_R = 27;
+constexpr uint8_t PIN_LED_G = 26;
 constexpr uint8_t PIN_LED_B = 25;
 
 // ---------------------------------------------------------------------------

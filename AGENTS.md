@@ -28,8 +28,8 @@ NestJS, Prisma, Render, Railway.
 ## Hardware ESP32-WROOM-32 (pinout fijo)
 - RC522 (SPI): SDA=5, SCK=18, MOSI=23, MISO=19, RST=21, 3.3V, GND
 - R307 (UART2): TXD->GPIO16, RXD->GPIO17, TOUCH->GPIO4 (opcional)
-- Relé SRD-05VDC: IN=GPIO25, VCC=5V, GND (Activa en LOW)
-- LED RGB cátodo común: R=GPIO26, G=GPIO27, B=GPIO14 (PWM, 220-330Ω cada uno)
+- Relé SRD-05VDC: IN=GPIO14, VCC=5V, GND (Activa en LOW)
+- LED RGB cátodo común: R=GPIO27, G=GPIO26, B=GPIO25 (PWM, 220-330Ω cada uno)
 - Chapa 12V: Fuente externa 12V >=2A + diodo flyback. Relé conmuta el positivo al NO (Normalmente Abierto).
 
 ## Lógica de Operación (ESP32)
@@ -87,10 +87,10 @@ R307 (Huella)	TXD	GPIO 16 (RX2)
 RXD	GPIO 17 (TX2)	
 VCC	5V (VIN)	Mejor 5V para el LED óptico
 GND	GND	
-Relé	IN	GPIO 25	
+Relé	IN	GPIO 14
 VCC	5V (VIN)	
 GND	GND	
-LED RGB	Rojo (R)	GPIO 26	Con resistencia 220Ω a GND
-Verde (G)	GPIO 27	Con resistencia 220Ω a GND
-Azul (B)	GPIO 14	Con resistencia 220Ω a GND
+LED RGB	Rojo (R)	GPIO 27	Con resistencia 220Ω a GND
+Verde (G)	GPIO 26	Con resistencia 220Ω a GND
+Azul (B)	GPIO 25	Con resistencia 220Ω a GND
 Cátodo (más largo)	GND

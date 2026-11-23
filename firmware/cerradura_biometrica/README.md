@@ -46,7 +46,7 @@ el flujo actual.
 
 | Relé | ESP32 |
 | --- | --- |
-| IN | GPIO25 |
+| IN | GPIO14 |
 | VCC | 5V (según el módulo) |
 | GND | GND |
 
@@ -60,9 +60,9 @@ el módulo no la incorpora.
 
 | LED | ESP32 |
 | --- | --- |
-| R | GPIO26 |
-| G | GPIO27 |
-| B | GPIO14 |
+| R | GPIO27 |
+| G | GPIO26 |
+| B | GPIO25 |
 | Cátodo común | GND |
 
 Usa resistencias limitadoras (por ejemplo 220–330 Ω por canal).

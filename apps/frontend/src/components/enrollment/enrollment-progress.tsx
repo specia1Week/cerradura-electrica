@@ -42,7 +42,7 @@ import { CommandStatusBadge } from '@/components/status-badges';
 const steps = [
   {
     key: 'PENDIENTE',
-    title: 'Dispositivo listo',
+    title: 'Esperando al lector',
     description: 'El lector tomará el comando en el próximo heartbeat.',
   },
   {
@@ -477,10 +477,14 @@ export function EnrollmentProgress({
                             : 'text-muted-foreground',
                       )}
                     >
-                      {step.title}
+                      {index === 0 && active && command.estado === 'EN_CURSO'
+                        ? 'Comando enviado; esperando tarjeta RFID'
+                        : step.title}
                     </p>
                     <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
-                      {step.description}
+                      {index === 0 && active && command.estado === 'EN_CURSO'
+                        ? 'El servidor marcó el comando en curso. Retirá cualquier tarjeta apoyada y acercá la que vas a registrar; el paso avanzará cuando el lector reporte su UID.'
+                        : step.description}
                     </p>
                   </div>
                 </div>
