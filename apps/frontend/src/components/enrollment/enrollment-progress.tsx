@@ -79,10 +79,10 @@ const steps = [
 
 const stepIndexByPaso: Record<string, number> = {
   PENDIENTE: 0,
-  TARJETA_LEIDA: 1,
-  HUELLA_1_OK: 2,
-  DEDO_RETIRADO: 3,
-  HUELLA_2_OK: 4,
+  TARJETA_LEIDA: 2,
+  HUELLA_1_OK: 3,
+  DEDO_RETIRADO: 4,
+  HUELLA_2_OK: 5,
   MODELO_CREADO: 5,
   HUELLA_GUARDADA: 6,
   COMPLETADO: 6,
