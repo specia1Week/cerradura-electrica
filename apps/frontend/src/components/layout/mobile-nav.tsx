@@ -52,6 +52,7 @@ export function MobileNav({ email, role }: { email: string; role: string }) {
             'absolute left-0 top-0 flex h-full w-[min(86vw,320px)] flex-col border-r border-border !bg-[oklch(var(--card))] p-4 text-card-foreground shadow-float transition-transform duration-300',
             open ? 'translate-x-0' : '-translate-x-full',
           )}
+          style={{ backgroundColor: 'oklch(var(--card) / 1)' }}
         >
           <div className="mb-6 flex items-center justify-between">
             <BrandMark onNavigate={() => setOpen(false)} />
